@@ -1,13 +1,30 @@
+use crate::server::connections::{accept_connections, bind_unix_socket, create_addr};
+use crossbeam_channel::unbounded;
 use std::net::TcpListener;
+use std::path::Path;
+use std::thread;
 
-use crate::server::connections::{accept_connections, create_addr};
-
+pub mod cache;
 mod server;
+
+pub mod executor;
 
 fn main() -> std::io::Result<()> {
     let addr = create_addr();
-    println!("iRiS listening on {addr}");
 
-    let listener = TcpListener::bind(&addr)?;
-    accept_connections(listener)
+    let (s, r) = unbounded::<String>();
+
+    thread::spawn(move || executor::run(r));
+
+    let tcp_listener = TcpListener::bind(&addr)?;
+    let unix_listener = bind_unix_socket(Path::new("/tmp/iris.sock"))?;
+    let unix_sender = s.clone();
+
+    thread::spawn(|| {
+        println!("Listening for Unix sockets on /tmp/iris.sock");
+        accept_connections(unix_listener, unix_sender)
+    });
+
+    println!("Listening for TCP connections on {}", addr);
+    accept_connections(tcp_listener, s)
 }
