@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 crossbeam-channel = "0.5.15"
 foldhash = "0.2.0"
+oneshot = { version = "0.2.1", features = ["std"] }

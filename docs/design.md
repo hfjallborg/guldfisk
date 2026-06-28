@@ -17,6 +17,12 @@ The per-connection threads should accept instructions from the client and add th
 
 # Executing instructions
 
+| Description          | Returns                                              |
+|----------------------|------------------------------------------------------|
+| Set a key-value pair | Ok()                                                 |
+| Get a value by key   | Return(value) if key exists, else Error(KeyNotFound) |
+| Delete a key         | Ok(), regardless of whether the key existed or not   |
+
 A single thread will be responsible for executing instructions from *all* connections. This is similar to how
 Redis handles commands. This will require a thread-safe queue that can be shared between all connection threads.
 

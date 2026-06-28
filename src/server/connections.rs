@@ -1,3 +1,4 @@
+use crate::executor::Instruction;
 use crossbeam_channel::Sender;
 use std::env;
 use std::io::{Read, Write};
@@ -7,12 +8,12 @@ use std::path::Path;
 
 pub trait Listener {
     type Stream: Read + Write;
-    fn accept_connection(&self, sender: Sender<String>) -> std::io::Result<Self::Stream>;
+    fn accept_connection(&self, sender: Sender<Instruction>) -> std::io::Result<Self::Stream>;
 }
 
 impl Listener for TcpListener {
     type Stream = TcpStream;
-    fn accept_connection(&self, _sender: Sender<String>) -> std::io::Result<TcpStream> {
+    fn accept_connection(&self, _sender: Sender<Instruction>) -> std::io::Result<TcpStream> {
         let stream = self.accept()?.0;
         Ok(stream)
     }
@@ -20,7 +21,7 @@ impl Listener for TcpListener {
 
 impl Listener for UnixListener {
     type Stream = UnixStream;
-    fn accept_connection(&self, _sender: Sender<String>) -> std::io::Result<UnixStream> {
+    fn accept_connection(&self, _sender: Sender<Instruction>) -> std::io::Result<UnixStream> {
         let stream = self.accept()?.0;
         Ok(stream)
     }
@@ -50,7 +51,7 @@ pub fn create_addr() -> String {
 
 fn handle_connection<S: Read + Write>(
     mut stream: S,
-    _sender: Sender<String>,
+    _sender: Sender<Instruction>,
 ) -> std::io::Result<()> {
     // Handles a new connection, given as a TCP stream
     stream.write_all(b"Lorem ipsum\n")?;
@@ -59,7 +60,10 @@ fn handle_connection<S: Read + Write>(
 
 /// Accepts connections from a listener (Unix or TCP) and passes each new stream to
 /// the connection handler
-pub fn accept_connections<L: Listener>(listener: L, sender: Sender<String>) -> std::io::Result<()> {
+pub fn accept_connections<L: Listener>(
+    listener: L,
+    sender: Sender<Instruction>,
+) -> std::io::Result<()> {
     loop {
         let stream = listener.accept_connection(sender.clone())?;
         handle_connection(stream, sender.clone())?;
