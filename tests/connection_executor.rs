@@ -39,6 +39,18 @@ fn set_then_get_returns_result() {
 }
 
 #[test]
+fn double_set_updates_value() {
+    let s = create_cache_thread();
+    execute(&s, Operation::Set("Foo".to_string(), b"Bar".to_vec()));
+    execute(&s, Operation::Set("Foo".to_string(), b"Baz".to_vec()));
+    let res = execute(&s, Operation::Get("Foo".to_string()));
+    let Response::Return(value) = res else {
+        panic!("Expected Return response");
+    };
+    assert_eq!(value, b"Baz".to_vec());
+}
+
+#[test]
 fn get_non_existing_key_returns_error() {
     let s = create_cache_thread();
     let res = execute(&s, Operation::Get("Foo".to_string()));
