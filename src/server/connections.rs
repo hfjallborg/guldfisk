@@ -1,13 +1,15 @@
-use crate::executor::Instruction;
+use crate::executor::{Instruction, Response};
+use crate::protocol::parse_command;
 use crossbeam_channel::Sender;
-use std::env;
-use std::io::{Read, Write};
+use oneshot::RecvError;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
+use std::{env, thread};
 
 pub trait Listener {
-    type Stream: Read + Write;
+    type Stream: Read + Write + Send + 'static;
     fn accept_connection(&self, sender: Sender<Instruction>) -> std::io::Result<Self::Stream>;
 }
 
@@ -49,13 +51,71 @@ pub fn create_addr() -> String {
     format!("127.0.0.1:{}", port)
 }
 
-fn handle_connection<S: Read + Write>(
+/// Loops through a stream, reading and handling commands
+fn accept_commands<S: Read + Write>(
     mut stream: S,
-    _sender: Sender<Instruction>,
+    sender: Sender<Instruction>,
+) -> Result<(), std::io::Error> {
+    let mut buf = BufReader::new(&mut stream);
+    let mut line = String::new();
+    loop {
+        line.clear();
+        if buf.read_line(&mut line)? == 0 {
+            return Ok(());
+        }
+        let (rs, rr) = oneshot::channel::<Response>();
+
+        let op = match parse_command(line.trim_end_matches(['\n', '\r'])) {
+            Ok(op) => op,
+            Err(e) => {
+                write!(buf.get_mut(), "ERR {}\r\n", e)?;
+                continue;
+            }
+        };
+
+        let inst = Instruction { op, reply: rs };
+        match sender.send(inst) {
+            Ok(_) => {}
+            Err(e) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    format!("Failed to send instruction: {}", e),
+                ));
+            }
+        }
+
+        match rr.recv() {
+            Ok(Response::Return(value)) => {
+                buf.get_mut().write_all(&value)?;
+                buf.get_mut().write_all(b"\r\n")?;
+            }
+            Ok(Response::Ok()) => {
+                buf.get_mut().write_all(b"OK\r\n")?;
+            }
+            Ok(Response::Error(kind)) => {
+                write!(buf.get_mut(), "ERR {}\r\n", kind)?;
+            }
+            Err(RecvError) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "Failed to receive response",
+                ));
+            }
+        }
+    }
+}
+
+/// Spawns a thread to handle a single connection
+fn handle_connection<S: Read + Write + Send + 'static>(
+    stream: S,
+    sender: Sender<Instruction>,
 ) -> std::io::Result<()> {
-    // Handles a new connection, given as a TCP stream
-    stream.write_all(b"Lorem ipsum\n")?;
-    stream.flush()
+    thread::spawn(move || -> std::io::Result<()> {
+        accept_commands(stream, sender)?;
+        Ok(())
+    });
+
+    Ok(())
 }
 
 /// Accepts connections from a listener (Unix or TCP) and passes each new stream to
@@ -73,28 +133,33 @@ pub fn accept_connections<L: Listener>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cache::Cache;
+    use crate::executor::run;
     use crossbeam_channel::unbounded;
-    use std::io::{BufRead, BufReader};
+    use std::io::{BufRead, BufReader, BufWriter};
     use std::thread;
 
     #[test]
     fn test_accept_tcp_connections() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
-        let (s, _r) = unbounded();
+        let (s, r) = unbounded();
+        thread::spawn(move || run(r, Cache::new()));
         thread::spawn(move || accept_connections(listener, s));
 
         let connection = TcpStream::connect(addr).unwrap();
-        let mut line = String::new();
-        BufReader::new(connection).read_line(&mut line).unwrap();
-        assert_eq!(line, "Lorem ipsum\n");
+        let mut reader = BufReader::new(connection.try_clone().unwrap());
+        let mut writer = BufWriter::new(connection);
+        let mut buffer = String::new();
+        writer.write_all(b"PING\r\n").unwrap();
+        writer.flush().unwrap();
+        reader.read_line(&mut buffer).unwrap();
+        assert_eq!(buffer, "OK\r\n");
     }
 
     #[test]
     fn test_accept_unix_connections() {
-        // Unique path in the temp dir so the socket file can't collide with a
-        // leftover from a previous run, a parallel test, or a running server.
-        let path = std::env::temp_dir().join(format!(
+        let path = env::temp_dir().join(format!(
             "iris-test-{}-{}.sock",
             std::process::id(),
             std::time::SystemTime::now()
@@ -104,17 +169,20 @@ mod tests {
         ));
         let listener = UnixListener::bind(&path).unwrap();
 
-        let (s, _r) = unbounded();
-        // spawn connection thread
+        let (s, r) = unbounded();
+        thread::spawn(move || run(r, Cache::new()));
         thread::spawn(move || accept_connections(listener, s));
 
-        // attempt connection
         let connection = UnixStream::connect(&path).unwrap();
-        let mut line = String::new();
-        BufReader::new(connection).read_line(&mut line).unwrap();
-        assert_eq!(line, "Lorem ipsum\n");
 
-        // The socket file isn't auto-removed; clean it up.
+        let mut reader = BufReader::new(connection.try_clone().unwrap());
+        let mut writer = BufWriter::new(connection);
+        let mut buffer = String::new();
+        writer.write_all(b"PING\r\n").unwrap();
+        writer.flush().unwrap();
+        reader.read_line(&mut buffer).unwrap();
+        assert_eq!(buffer, "OK\r\n");
+
         std::fs::remove_file(&path).unwrap();
     }
 }

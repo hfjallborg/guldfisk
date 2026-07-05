@@ -1,4 +1,5 @@
 use crate::executor::Operation;
+use std::fmt::Display;
 
 #[derive(Debug, PartialEq)]
 pub enum ParseError {
@@ -7,15 +8,22 @@ pub enum ParseError {
     UnknownVerb(String),
 }
 
+impl Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ParseError::Empty => write!(f, "Empty command"),
+            ParseError::MissingArguments => write!(f, "Missing arguments"),
+            ParseError::UnknownVerb(verb) => write!(f, "Unknown verb: {}", verb),
+        }
+    }
+}
+
 /// Reads a one-line command and returns an Operation enum
 pub fn parse_command(command: &str) -> Result<Operation, ParseError> {
-    let (verb, rest) = command.split_once(' ').ok_or({
-        if command.is_empty() {
-            ParseError::Empty
-        } else {
-            ParseError::MissingArguments
-        }
-    })?;
+    if command.is_empty() {
+        return Err(ParseError::Empty);
+    }
+    let (verb, rest) = command.split_once(' ').unwrap_or((command, ""));
 
     match verb.to_ascii_uppercase().as_str() {
         "SET" => {
@@ -33,6 +41,7 @@ pub fn parse_command(command: &str) -> Result<Operation, ParseError> {
             let key = String::from(rest);
             Ok(Operation::Delete(key))
         }
+        "PING" => Ok(Operation::Ping),
         _ => Err(ParseError::UnknownVerb(verb.to_string())),
     }
 }

@@ -1,15 +1,27 @@
 use crate::cache::Cache;
 use crossbeam_channel::Receiver;
+use std::fmt::Display;
 
 #[derive(Debug)]
 pub enum Operation {
     Set(String, Vec<u8>),
     Get(String),
     Delete(String),
+    Ping,
 }
 
 pub enum ErrorKind {
     KeyNotFound,
+}
+
+impl Display for ErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ErrorKind::KeyNotFound => {
+                write!(f, "Key not found")
+            }
+        }
+    }
 }
 
 pub enum Response {
@@ -51,6 +63,9 @@ pub fn run(receiver: Receiver<Instruction>, mut cache: Cache) {
             Operation::Delete(key) => {
                 println!("delete: {}", key);
                 cache.delete(&key);
+                instruction.reply.send(Response::Ok()).unwrap();
+            }
+            Operation::Ping => {
                 instruction.reply.send(Response::Ok()).unwrap();
             }
         }
