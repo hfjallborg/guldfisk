@@ -1,6 +1,7 @@
 use crate::cache::Cache;
 use crossbeam_channel::Receiver;
 
+#[derive(Debug)]
 pub enum Operation {
     Set(String, Vec<u8>),
     Get(String),
