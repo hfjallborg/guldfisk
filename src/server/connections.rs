@@ -185,4 +185,35 @@ mod tests {
 
         std::fs::remove_file(&path).unwrap();
     }
+
+    #[test]
+    fn test_recover_after_parse_error() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (s, r) = unbounded();
+        thread::spawn(move || run(r, Cache::new()));
+        thread::spawn(move || accept_connections(listener, s));
+
+        let connection = TcpStream::connect(addr).unwrap();
+        let mut reader = BufReader::new(connection.try_clone().unwrap());
+        let mut writer = BufWriter::new(connection);
+        let mut buffer = String::new();
+
+        // Invalid command
+        writer.write_all(b"INVALID\r\n").unwrap();
+        writer.flush().unwrap();
+        reader.read_line(&mut buffer).unwrap();
+
+        assert!(buffer.starts_with("ERR"));
+        assert!(buffer.ends_with("\r\n"));
+
+        buffer.clear();
+
+        // Valid command
+        writer.write_all(b"PING\r\n").unwrap();
+        writer.flush().unwrap();
+        reader.read_line(&mut buffer).unwrap();
+
+        assert_eq!(buffer, "OK\r\n");
+    }
 }
