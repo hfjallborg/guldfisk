@@ -1,16 +1,18 @@
-# iRiS
-![Status](https://img.shields.io/badge/status-WIP-orange?style=flat-square)
-![Rust](https://img.shields.io/badge/rust-stable-orange?style=flat-square&logo=rust)
-![Version](https://img.shields.io/badge/version-0.1.0-blue?style=flat-square)
+<img src="docs/iris-banner.svg" width="320" alt="iRiS" />
 
-> *"We have Redis at home"*
----
-In-memory cache and message broker written in Rust.
+![Status](https://img.shields.io/badge/status-WIP-8b949e?style=flat-square)
+![Rust](https://img.shields.io/badge/rust-stable-8b949e?style=flat-square&logo=rust&logoColor=white)
+![Version](https://img.shields.io/badge/version-0.1.0-7c6cf0?style=flat-square)
+
+***"We have Redis at home"***
+
+In-memory cache and message broker written in Rust, currently a work in progress. Heavily inspired by Redis, it builds
+upon a key-value hashmap and uses a single execution thread to handle all commands. Clients can connect using either TCP or Unix sockets.
 
 ## Configuration
 
 Configured via environment variables:
 
 | Variable    | Default | Description                  |
-| ----------- | ------- | ---------------------------- |
+|-------------|---------|------------------------------|
 | `IRIS_PORT` | `1983`  | TCP port the server binds to |

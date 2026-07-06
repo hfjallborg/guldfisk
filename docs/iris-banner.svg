@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="110" viewBox="0 0 320 110">
+  <defs>
+    <linearGradient id="iris-grad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#ff5f6d"/>
+      <stop offset="25%" stop-color="#ffc371"/>
+      <stop offset="50%" stop-color="#47e891"/>
+      <stop offset="75%" stop-color="#38b6ff"/>
+      <stop offset="100%" stop-color="#b967ff"/>
+    </linearGradient>
+  </defs>
+  <text x="2" y="82" text-anchor="start"
+        font-family="-apple-system, 'Segoe UI', 'Helvetica Neue', Roboto, Arial, sans-serif"
+        font-size="72" font-weight="800" letter-spacing="2" fill="url(#iris-grad)">iRiS</text>
+</svg>
