@@ -41,12 +41,10 @@ pub fn run(receiver: Receiver<Instruction>, mut cache: Cache) {
     for instruction in receiver.iter() {
         match instruction.op {
             Operation::Set(key, value) => {
-                println!("set: {} to {}", key, String::from_utf8_lossy(&value));
                 cache.set(&key, value);
                 instruction.reply.send(Response::Ok()).unwrap();
             }
             Operation::Get(key) => {
-                println!("get: {}", key);
                 let value = cache.get(&key);
                 match value {
                     Some(value) => {
@@ -61,7 +59,6 @@ pub fn run(receiver: Receiver<Instruction>, mut cache: Cache) {
                 }
             }
             Operation::Delete(key) => {
-                println!("delete: {}", key);
                 cache.delete(&key);
                 instruction.reply.send(Response::Ok()).unwrap();
             }
