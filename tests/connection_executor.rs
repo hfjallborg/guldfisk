@@ -1,21 +1,29 @@
 use crossbeam_channel::{Sender, unbounded};
 use iris::cache::Cache;
-use iris::executor::{Instruction, Operation, Response, run};
+use iris::executor::{ErrorKind, Instruction, Operation, Response, run};
+use iris::expiration::ExpirationTable;
 use std::thread;
+use std::thread::sleep;
+use std::time::{Duration, SystemTime};
 
 fn create_cache_thread() -> Sender<Instruction> {
     let (s, r) = unbounded::<Instruction>();
 
     let cache = Cache::new();
     thread::spawn(move || {
-        run(r, cache);
+        run(r, cache, ExpirationTable::new());
     });
     s
 }
 
 fn execute(s: &Sender<Instruction>, op: Operation) -> Response {
     let (rs, rr) = oneshot::channel::<Response>();
-    s.send(Instruction { op, reply: rs }).unwrap();
+    s.send(Instruction {
+        op,
+        reply: rs,
+        timestamp: SystemTime::now(),
+    })
+    .unwrap();
     rr.recv().unwrap()
 }
 
@@ -56,7 +64,7 @@ fn get_non_existing_key_returns_error() {
     let res = execute(&s, Operation::Get("Foo".to_string()));
     match res {
         Response::Error(kind) => {
-            assert!(matches!(kind, iris::executor::ErrorKind::KeyNotFound));
+            assert!(matches!(kind, ErrorKind::KeyNotFound));
         }
         _ => panic!("Expected Error response"),
     }
@@ -77,8 +85,51 @@ fn delete_existing_key_then_get_returns_error() {
     let res = execute(&s, Operation::Get("Foo".to_string()));
     match res {
         Response::Error(kind) => {
-            assert!(matches!(kind, iris::executor::ErrorKind::KeyNotFound));
+            assert!(matches!(kind, ErrorKind::KeyNotFound));
         }
         _ => panic!("Expected Error response"),
+    }
+}
+
+#[test]
+fn get_expired_key_returns_error() {
+    let s = create_cache_thread();
+
+    match Instruction::send(
+        Operation::Set("Foo".to_string(), b"Bar".to_vec()),
+        s.clone(),
+    ) {
+        Ok(_) => {}
+        Err(_) => panic!("Expected Ok response"),
+    }
+    match Instruction::send(
+        Operation::Expire("Foo".to_string(), Duration::from_secs(2)),
+        s.clone(),
+    ) {
+        Ok(_) => {}
+        Err(_) => panic!("Expected Ok response"),
+    }
+
+    // attempt GET before expiration
+    match Instruction::send(Operation::Get("Foo".to_string()), s.clone()) {
+        Ok(response) => {
+            let Response::Return(value) = response else {
+                panic!("Expected Return response");
+            };
+            assert_eq!(value, b"Bar".to_vec());
+        }
+        Err(_) => panic!("Expected Ok response"),
+    }
+
+    sleep(Duration::from_secs(2));
+
+    match Instruction::send(Operation::Get("Foo".to_string()), s.clone()) {
+        Ok(response) => {
+            let Response::Error(ErrorKind::KeyNotFound) = response else {
+                panic!("Expected Error response");
+            };
+            assert!(matches!(response, Response::Error(ErrorKind::KeyNotFound)));
+        }
+        Err(_) => panic!("Expected Ok response"),
     }
 }

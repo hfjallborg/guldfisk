@@ -1,6 +1,7 @@
 use crossbeam_channel::unbounded;
 use iris::cache::Cache;
 use iris::executor::{Instruction, run};
+use iris::expiration::ExpirationTable;
 use iris::server::connections::accept_connections;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::net::{TcpListener, TcpStream};
@@ -35,7 +36,7 @@ fn set_tcp_roundtrip(b: divan::Bencher, key_len: usize) {
     let c = Cache::new();
     let (s, r) = unbounded::<Instruction>();
     thread::spawn(move || {
-        run(r, c);
+        run(r, c, ExpirationTable::new());
     });
 
     // TCP thread

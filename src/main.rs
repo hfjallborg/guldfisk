@@ -1,6 +1,7 @@
 use crossbeam_channel::unbounded;
 use iris::cache::Cache;
 use iris::executor::{self, Instruction};
+use iris::expiration::ExpirationTable;
 use iris::server::connections::{accept_connections, bind_unix_socket, create_addr};
 use std::net::TcpListener;
 use std::path::Path;
@@ -12,7 +13,7 @@ fn main() -> std::io::Result<()> {
     let (s, r) = unbounded::<Instruction>();
 
     let cache = Cache::new();
-    thread::spawn(move || executor::run(r, cache));
+    thread::spawn(move || executor::run(r, cache, ExpirationTable::new()));
 
     let tcp_listener = TcpListener::bind(&addr)?;
     let unix_listener = bind_unix_socket(Path::new("/tmp/iris.sock"))?;

@@ -1,12 +1,15 @@
 use crate::cache::Cache;
-use crossbeam_channel::Receiver;
+use crate::expiration::ExpirationTable;
+use crossbeam_channel::{Receiver, SendError};
 use std::fmt::Display;
+use std::time::{Duration, SystemTime};
 
 #[derive(Debug)]
 pub enum Operation {
     Set(String, Vec<u8>),
     Get(String),
     Delete(String),
+    Expire(String, Duration),
     Ping,
 }
 
@@ -33,9 +36,50 @@ pub enum Response {
 pub struct Instruction {
     pub op: Operation,
     pub reply: oneshot::Sender<Response>,
+    pub timestamp: SystemTime,
 }
 
-pub fn run(receiver: Receiver<Instruction>, mut cache: Cache) {
+pub enum InstructionSendError {
+    Send(SendError<Instruction>),
+    Recv(oneshot::RecvError),
+}
+
+impl From<SendError<Instruction>> for InstructionSendError {
+    fn from(err: SendError<Instruction>) -> Self {
+        InstructionSendError::Send(err)
+    }
+}
+
+impl From<oneshot::RecvError> for InstructionSendError {
+    fn from(err: oneshot::RecvError) -> Self {
+        InstructionSendError::Recv(err)
+    }
+}
+
+impl Instruction {
+    /// Sends an instruction to the executor and waits for a response.
+    /// Sets the necessary fields in the instruction struct and creates the oneshot channel for the response.
+    pub fn send(
+        op: Operation,
+        sender: crossbeam_channel::Sender<Instruction>,
+    ) -> Result<Response, InstructionSendError> {
+        let (rs, rr) = oneshot::channel::<Response>();
+        let instruction = Instruction {
+            op,
+            timestamp: SystemTime::now(),
+            reply: rs,
+        };
+        sender.send(instruction)?;
+        let response = rr.recv()?;
+        Ok(response)
+    }
+}
+
+pub fn run(
+    receiver: Receiver<Instruction>,
+    mut cache: Cache,
+    mut expiration_table: ExpirationTable,
+) {
     // Receives commands from connection threads and executes them.
 
     for instruction in receiver.iter() {
@@ -48,7 +92,17 @@ pub fn run(receiver: Receiver<Instruction>, mut cache: Cache) {
                 let value = cache.get(&key);
                 match value {
                     Some(value) => {
-                        instruction.reply.send(Response::Return(value)).unwrap();
+                        // check expiry
+                        if expiration_table.is_expired(&key, instruction.timestamp) {
+                            cache.delete(&key);
+                            expiration_table.delete(&key);
+                            instruction
+                                .reply
+                                .send(Response::Error(ErrorKind::KeyNotFound))
+                                .unwrap();
+                        } else {
+                            instruction.reply.send(Response::Return(value)).unwrap();
+                        }
                     }
                     None => {
                         instruction
@@ -60,6 +114,10 @@ pub fn run(receiver: Receiver<Instruction>, mut cache: Cache) {
             }
             Operation::Delete(key) => {
                 cache.delete(&key);
+                instruction.reply.send(Response::Ok()).unwrap();
+            }
+            Operation::Expire(key, ttl) => {
+                expiration_table.add(key, ttl);
                 instruction.reply.send(Response::Ok()).unwrap();
             }
             Operation::Ping => {

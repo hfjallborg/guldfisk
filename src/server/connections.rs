@@ -1,7 +1,6 @@
-use crate::executor::{Instruction, Response};
+use crate::executor::{Instruction, InstructionSendError, Response};
 use crate::protocol::parse_command;
 use crossbeam_channel::Sender;
-use oneshot::RecvError;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -63,7 +62,7 @@ fn accept_commands<S: Read + Write>(
         if buf.read_line(&mut line)? == 0 {
             return Ok(());
         }
-        let (rs, rr) = oneshot::channel::<Response>();
+        let (_rs, _rr) = oneshot::channel::<Response>();
 
         let op = match parse_command(line.trim_end_matches(['\n', '\r'])) {
             Ok(op) => op,
@@ -73,18 +72,7 @@ fn accept_commands<S: Read + Write>(
             }
         };
 
-        let inst = Instruction { op, reply: rs };
-        match sender.send(inst) {
-            Ok(_) => {}
-            Err(e) => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    format!("Failed to send instruction: {}", e),
-                ));
-            }
-        }
-
-        match rr.recv() {
+        match Instruction::send(op, sender.clone()) {
             Ok(Response::Return(value)) => {
                 buf.get_mut().write_all(&value)?;
                 buf.get_mut().write_all(b"\r\n")?;
@@ -95,10 +83,16 @@ fn accept_commands<S: Read + Write>(
             Ok(Response::Error(kind)) => {
                 write!(buf.get_mut(), "ERR {}\r\n", kind)?;
             }
-            Err(RecvError) => {
+            Err(InstructionSendError::Send(e)) => {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::BrokenPipe,
-                    "Failed to receive response",
+                    format!("Failed to send instruction: {}", e),
+                ));
+            }
+            Err(InstructionSendError::Recv(e)) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    format!("Failed to receive response: {}", e),
                 ));
             }
         }
@@ -135,6 +129,7 @@ mod tests {
     use super::*;
     use crate::cache::Cache;
     use crate::executor::run;
+    use crate::expiration::ExpirationTable;
     use crossbeam_channel::unbounded;
     use std::io::{BufRead, BufReader, BufWriter};
     use std::thread;
@@ -144,7 +139,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let (s, r) = unbounded();
-        thread::spawn(move || run(r, Cache::new()));
+        thread::spawn(move || run(r, Cache::new(), ExpirationTable::new()));
         thread::spawn(move || accept_connections(listener, s));
 
         let connection = TcpStream::connect(addr).unwrap();
@@ -170,7 +165,7 @@ mod tests {
         let listener = UnixListener::bind(&path).unwrap();
 
         let (s, r) = unbounded();
-        thread::spawn(move || run(r, Cache::new()));
+        thread::spawn(move || run(r, Cache::new(), ExpirationTable::new()));
         thread::spawn(move || accept_connections(listener, s));
 
         let connection = UnixStream::connect(&path).unwrap();
@@ -191,7 +186,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let (s, r) = unbounded();
-        thread::spawn(move || run(r, Cache::new()));
+        thread::spawn(move || run(r, Cache::new(), ExpirationTable::new()));
         thread::spawn(move || accept_connections(listener, s));
 
         let connection = TcpStream::connect(addr).unwrap();
