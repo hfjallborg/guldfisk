@@ -1,4 +1,4 @@
-<img src="docs/iris-banner.svg" width="320" alt="iRiS" />
+<img src="docs/guldfisk-banner.svg" width="320" alt="guldfisk" />
 
 ![Status](https://img.shields.io/badge/status-WIP-8b949e?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-stable-8b949e?style=flat-square&logo=rust&logoColor=white)
@@ -15,4 +15,4 @@ Configured via environment variables:
 
 | Variable    | Default | Description                  |
 |-------------|---------|------------------------------|
-| `IRIS_PORT` | `1983`  | TCP port the server binds to |
+| `GULDFISK_PORT` | `1983`  | TCP port the server binds to |

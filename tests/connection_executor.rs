@@ -1,7 +1,7 @@
 use crossbeam_channel::{Sender, unbounded};
-use iris::cache::Cache;
-use iris::executor::{ErrorKind, Instruction, Operation, Response, run};
-use iris::expiration::ExpirationTable;
+use guldfisk::cache::Cache;
+use guldfisk::executor::{ErrorKind, Instruction, Operation, Response, run};
+use guldfisk::expiration::ExpirationTable;
 use std::thread;
 use std::thread::sleep;
 use std::time::{Duration, SystemTime};

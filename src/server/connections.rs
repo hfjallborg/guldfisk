@@ -46,7 +46,7 @@ pub fn bind_unix_socket(path: &Path) -> std::io::Result<UnixListener> {
 
 pub fn create_addr() -> String {
     // Creates the TCP listener address from env variables
-    let port = env::var("IRIS_PORT").unwrap_or_else(|_| "1983".to_string());
+    let port = env::var("GULDFISK_PORT").unwrap_or_else(|_| "1983".to_string());
     format!("127.0.0.1:{}", port)
 }
 
@@ -155,7 +155,7 @@ mod tests {
     #[test]
     fn test_accept_unix_connections() {
         let path = env::temp_dir().join(format!(
-            "iris-test-{}-{}.sock",
+            "guldfisk-test-{}-{}.sock",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

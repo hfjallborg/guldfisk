@@ -1,8 +1,8 @@
 use crossbeam_channel::unbounded;
-use iris::cache::Cache;
-use iris::executor::{Instruction, run};
-use iris::expiration::ExpirationTable;
-use iris::server::connections::accept_connections;
+use guldfisk::cache::Cache;
+use guldfisk::executor::{Instruction, run};
+use guldfisk::expiration::ExpirationTable;
+use guldfisk::server::connections::accept_connections;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::net::{TcpListener, TcpStream};
 use std::thread;
