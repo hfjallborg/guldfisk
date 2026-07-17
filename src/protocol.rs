@@ -1,5 +1,5 @@
-use crate::executor::Operation;
 use std::fmt::Display;
+use std::time::Duration;
 
 #[derive(Debug, PartialEq)]
 pub enum ParseError {
@@ -18,8 +18,21 @@ impl Display for ParseError {
     }
 }
 
+#[derive(Debug)]
+pub enum Command {
+    Set(String, String),
+    Get(String),
+    Delete(String),
+    Expire(String, Duration),
+    Subscribe(String),
+    Unsubscribe(String),
+    Exit,
+    Publish(String, String),
+    Ping,
+}
+
 /// Reads a one-line command and returns an Operation enum
-pub fn parse_command(command: &str) -> Result<Operation, ParseError> {
+pub fn parse_command(command: &str) -> Result<Command, ParseError> {
     if command.is_empty() {
         return Err(ParseError::Empty);
     }
@@ -28,20 +41,43 @@ pub fn parse_command(command: &str) -> Result<Operation, ParseError> {
     match verb.to_ascii_uppercase().as_str() {
         "SET" => {
             let (key, value_str) = rest.split_once(' ').ok_or(ParseError::MissingArguments)?;
-            Ok(Operation::Set(
-                String::from(key),
-                value_str.as_bytes().to_vec(),
-            ))
+            Ok(Command::Set(String::from(key), String::from(value_str)))
         }
         "GET" => {
             let key = String::from(rest);
-            Ok(Operation::Get(key))
+            Ok(Command::Get(key))
         }
         "DELETE" => {
             let key = String::from(rest);
-            Ok(Operation::Delete(key))
+            Ok(Command::Delete(key))
         }
-        "PING" => Ok(Operation::Ping),
+        "EXPIRE" => {
+            let (key, duration_str) = rest.split_once(' ').ok_or(ParseError::MissingArguments)?;
+            let duration = duration_str
+                .parse::<u64>()
+                .map_err(|_| ParseError::MissingArguments)?;
+            Ok(Command::Expire(
+                String::from(key),
+                Duration::from_secs(duration),
+            ))
+        }
+        "SUBSCRIBE" => {
+            let channel = String::from(rest);
+            Ok(Command::Subscribe(channel))
+        }
+        "UNSUBSCRIBE" => {
+            let channel = String::from(rest);
+            Ok(Command::Unsubscribe(channel))
+        }
+        "PUBLISH" => {
+            let (channel, content) = rest.split_once(' ').ok_or(ParseError::MissingArguments)?;
+            Ok(Command::Publish(
+                String::from(channel),
+                String::from(content),
+            ))
+        }
+        "PING" => Ok(Command::Ping),
+        "EXIT" => Ok(Command::Exit),
         _ => Err(ParseError::UnknownVerb(verb.to_string())),
     }
 }
@@ -84,17 +120,17 @@ mod tests {
     fn parse_set_command() {
         let command = "SET foo hello world";
 
-        let Operation::Set(k, v) = parse_command(command).unwrap() else {
+        let Command::Set(k, v) = parse_command(command).unwrap() else {
             panic!("{:?}", command);
         };
         assert_eq!(k, "foo");
-        assert_eq!(v, b"hello world".to_vec());
+        assert_eq!(v, "hello world");
     }
 
     #[test]
     fn parse_get_command() {
         let command = "GET foo";
-        let Operation::Get(k) = parse_command(command).unwrap() else {
+        let Command::Get(k) = parse_command(command).unwrap() else {
             panic!("{:?}", command);
         };
         assert_eq!(k, "foo");
@@ -103,7 +139,7 @@ mod tests {
     #[test]
     fn parse_delete_command() {
         let command = "DELETE foo";
-        let Operation::Delete(k) = parse_command(command).unwrap() else {
+        let Command::Delete(k) = parse_command(command).unwrap() else {
             panic!("{:?}", command);
         };
         assert_eq!(k, "foo");

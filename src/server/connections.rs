@@ -1,10 +1,12 @@
-use crate::executor::{Instruction, InstructionSendError, Response};
-use crate::protocol::parse_command;
-use crossbeam_channel::Sender;
-use std::io::{BufRead, BufReader, Read, Write};
+use crate::executor::{Instruction, InstructionSendError, Operation, Response};
+use crate::messaging::Message;
+use crate::protocol::{Command, parse_command};
+use crossbeam_channel::{Receiver, Sender, unbounded};
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
+use std::thread::JoinHandle;
 use std::{env, thread};
 
 pub trait Listener {
@@ -25,6 +27,22 @@ impl Listener for UnixListener {
     fn accept_connection(&self, _sender: Sender<Instruction>) -> std::io::Result<UnixStream> {
         let stream = self.accept()?.0;
         Ok(stream)
+    }
+}
+
+pub trait TryCloneStream: Sized {
+    fn try_clone(&self) -> std::io::Result<Self>;
+}
+
+impl TryCloneStream for TcpStream {
+    fn try_clone(&self) -> std::io::Result<Self> {
+        self.try_clone()
+    }
+}
+
+impl TryCloneStream for UnixStream {
+    fn try_clone(&self) -> std::io::Result<Self> {
+        self.try_clone()
     }
 }
 
@@ -50,35 +68,73 @@ pub fn create_addr() -> String {
     format!("127.0.0.1:{}", port)
 }
 
+pub fn receive_messages<S: Read + Write + Send + 'static>(
+    rx: Receiver<Message>,
+    mut buf_writer: BufWriter<S>,
+) -> std::io::Result<()> {
+    rx.recv().iter().try_for_each(|msg| {
+        write!(buf_writer, "MSG {} {}\r\n", msg.channel, msg.content)?;
+        buf_writer.flush()?;
+        Ok(())
+    })
+}
+
 /// Loops through a stream, reading and handling commands
-fn accept_commands<S: Read + Write>(
-    mut stream: S,
-    sender: Sender<Instruction>,
-) -> Result<(), std::io::Error> {
-    let mut buf = BufReader::new(&mut stream);
+fn accept_commands<S: Read + Write + TryCloneStream + Send + 'static>(
+    stream: S,
+    sender: &Sender<Instruction>,
+    connection_id: u64,
+) -> Result<Option<JoinHandle<Result<(), std::io::Error>>>, std::io::Error> {
+    let mut buf = BufReader::new(stream.try_clone()?);
     let mut line = String::new();
+    let (msg_tx, msg_rx) = unbounded::<Message>();
+    let mut msg_rx = Some(msg_rx);
+    let mut msg_handle: Option<JoinHandle<Result<(), std::io::Error>>> = None;
     loop {
         line.clear();
         if buf.read_line(&mut line)? == 0 {
-            return Ok(());
+            return Ok(msg_handle);
         }
-        let (_rs, _rr) = oneshot::channel::<Response>();
 
-        let op = match parse_command(line.trim_end_matches(['\n', '\r'])) {
-            Ok(op) => op,
+        let cmd = match parse_command(line.trim_end_matches(['\n', '\r'])) {
+            Ok(cmd) => cmd,
             Err(e) => {
                 write!(buf.get_mut(), "ERR {}\r\n", e)?;
                 continue;
             }
         };
 
-        match Instruction::send(op, sender.clone()) {
+        let op = match cmd {
+            Command::Set(key, value) => Operation::Set(key, value.into_bytes()),
+            Command::Get(key) => Operation::Get(key),
+            Command::Delete(key) => Operation::Delete(key),
+            Command::Expire(key, ttl) => Operation::Expire(key, ttl),
+            Command::Subscribe(channel) => {
+                if let Some(rx) = msg_rx.take() {
+                    let write_half = stream.try_clone()?;
+                    msg_handle = Some(thread::spawn(move || {
+                        receive_messages(rx, BufWriter::new(write_half))
+                    }));
+                }
+                Operation::Subscribe(channel, msg_tx.clone())
+            }
+            Command::Unsubscribe(channel) => Operation::Unsubscribe(channel),
+            Command::Publish(channel, content) => Operation::Publish(channel, content),
+            Command::Ping => Operation::Ping,
+            Command::Exit => Operation::Terminate,
+        };
+        let is_exit = matches!(op, Operation::Terminate);
+
+        match Instruction::send(op, sender.clone(), connection_id) {
             Ok(Response::Return(value)) => {
                 buf.get_mut().write_all(&value)?;
                 buf.get_mut().write_all(b"\r\n")?;
             }
             Ok(Response::Ok()) => {
                 buf.get_mut().write_all(b"OK\r\n")?;
+                if is_exit {
+                    return Ok(msg_handle);
+                }
             }
             Ok(Response::Error(kind)) => {
                 write!(buf.get_mut(), "ERR {}\r\n", kind)?;
@@ -99,13 +155,40 @@ fn accept_commands<S: Read + Write>(
     }
 }
 
+/// "Gracefully" quit the connection
+///
+/// Sends an instruction to remove all subscriptions
+fn terminate_connection(sender: Sender<Instruction>, connection_id: u64) {
+    match Instruction::send(Operation::Terminate, sender.clone(), connection_id) {
+        Ok(Response::Ok()) => {}
+        Err(InstructionSendError::Send(e)) => {
+            println!("Failed to send terminate instruction: {}", e);
+        }
+        Err(InstructionSendError::Recv(e)) => {
+            println!("Failed to receive terminate response: {}", e);
+        }
+        _ => {
+            println!("Unexpected response when terminating connection");
+        }
+    }
+}
+
 /// Spawns a thread to handle a single connection
-fn handle_connection<S: Read + Write + Send + 'static>(
+fn handle_connection<S: Read + Write + Send + TryCloneStream + 'static>(
     stream: S,
     sender: Sender<Instruction>,
+    id: u64,
 ) -> std::io::Result<()> {
     thread::spawn(move || -> std::io::Result<()> {
-        accept_commands(stream, sender)?;
+        let msg_handle = accept_commands(stream, &sender, id)?;
+        terminate_connection(sender, id);
+        if let Some(handle) = msg_handle {
+            match handle.join() {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => println!("Message receiver thread exited with error: {}", e),
+                Err(_) => println!("Message receiver thread panicked"),
+            }
+        }
         Ok(())
     });
 
@@ -117,10 +200,16 @@ fn handle_connection<S: Read + Write + Send + 'static>(
 pub fn accept_connections<L: Listener>(
     listener: L,
     sender: Sender<Instruction>,
-) -> std::io::Result<()> {
+) -> std::io::Result<()>
+where
+    <L as Listener>::Stream: TryCloneStream,
+{
+    let mut counter: u64 = 0;
+
     loop {
         let stream = listener.accept_connection(sender.clone())?;
-        handle_connection(stream, sender.clone())?;
+        handle_connection(stream, sender.clone(), counter)?;
+        counter += 1;
     }
 }
 
@@ -130,6 +219,7 @@ mod tests {
     use crate::cache::Cache;
     use crate::executor::run;
     use crate::expiration::ExpirationTable;
+    use crate::messaging::SubscriptionTable;
     use crossbeam_channel::unbounded;
     use std::io::{BufRead, BufReader, BufWriter};
     use std::thread;
@@ -139,7 +229,14 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let (s, r) = unbounded();
-        thread::spawn(move || run(r, Cache::new(), ExpirationTable::new()));
+        thread::spawn(move || {
+            run(
+                r,
+                Cache::new(),
+                ExpirationTable::new(),
+                SubscriptionTable::new(),
+            )
+        });
         thread::spawn(move || accept_connections(listener, s));
 
         let connection = TcpStream::connect(addr).unwrap();
@@ -165,7 +262,14 @@ mod tests {
         let listener = UnixListener::bind(&path).unwrap();
 
         let (s, r) = unbounded();
-        thread::spawn(move || run(r, Cache::new(), ExpirationTable::new()));
+        thread::spawn(move || {
+            run(
+                r,
+                Cache::new(),
+                ExpirationTable::new(),
+                SubscriptionTable::new(),
+            )
+        });
         thread::spawn(move || accept_connections(listener, s));
 
         let connection = UnixStream::connect(&path).unwrap();
@@ -186,7 +290,14 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let (s, r) = unbounded();
-        thread::spawn(move || run(r, Cache::new(), ExpirationTable::new()));
+        thread::spawn(move || {
+            run(
+                r,
+                Cache::new(),
+                ExpirationTable::new(),
+                SubscriptionTable::new(),
+            )
+        });
         thread::spawn(move || accept_connections(listener, s));
 
         let connection = TcpStream::connect(addr).unwrap();

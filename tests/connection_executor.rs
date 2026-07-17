@@ -1,27 +1,15 @@
-use crossbeam_channel::{Sender, unbounded};
-use guldfisk::cache::Cache;
-use guldfisk::executor::{ErrorKind, Instruction, Operation, Response, run};
-use guldfisk::expiration::ExpirationTable;
-use std::thread;
+mod utils;
+use crossbeam_channel::Sender;
+use guldfisk::executor::{ErrorKind, Instruction, Operation, Response};
 use std::thread::sleep;
 use std::time::{Duration, SystemTime};
-
-fn create_cache_thread() -> Sender<Instruction> {
-    let (s, r) = unbounded::<Instruction>();
-
-    let cache = Cache::new();
-    thread::spawn(move || {
-        run(r, cache, ExpirationTable::new());
-    });
-    s
-}
-
 fn execute(s: &Sender<Instruction>, op: Operation) -> Response {
     let (rs, rr) = oneshot::channel::<Response>();
     s.send(Instruction {
         op,
         reply: rs,
         timestamp: SystemTime::now(),
+        connection_id: 1,
     })
     .unwrap();
     rr.recv().unwrap()
@@ -29,7 +17,7 @@ fn execute(s: &Sender<Instruction>, op: Operation) -> Response {
 
 #[test]
 fn set_returns_ok() {
-    let s = create_cache_thread();
+    let s = utils::create_execution_thread();
 
     let res = execute(&s, Operation::Set("Foo".to_string(), b"Bar".to_vec()));
     assert!(matches!(res, Response::Ok()));
@@ -37,7 +25,7 @@ fn set_returns_ok() {
 
 #[test]
 fn set_then_get_returns_result() {
-    let s = create_cache_thread();
+    let s = utils::create_execution_thread();
     execute(&s, Operation::Set("Foo".to_string(), b"Bar".to_vec()));
     let res = execute(&s, Operation::Get("Foo".to_string()));
     let Response::Return(value) = res else {
@@ -48,7 +36,7 @@ fn set_then_get_returns_result() {
 
 #[test]
 fn double_set_updates_value() {
-    let s = create_cache_thread();
+    let s = utils::create_execution_thread();
     execute(&s, Operation::Set("Foo".to_string(), b"Bar".to_vec()));
     execute(&s, Operation::Set("Foo".to_string(), b"Baz".to_vec()));
     let res = execute(&s, Operation::Get("Foo".to_string()));
@@ -60,7 +48,7 @@ fn double_set_updates_value() {
 
 #[test]
 fn get_non_existing_key_returns_error() {
-    let s = create_cache_thread();
+    let s = utils::create_execution_thread();
     let res = execute(&s, Operation::Get("Foo".to_string()));
     match res {
         Response::Error(kind) => {
@@ -72,14 +60,14 @@ fn get_non_existing_key_returns_error() {
 
 #[test]
 fn delete_non_existing_key_returns_ok() {
-    let s = create_cache_thread();
+    let s = utils::create_execution_thread();
     let res = execute(&s, Operation::Delete("Foo".to_string()));
     assert!(matches!(res, Response::Ok()));
 }
 
 #[test]
 fn delete_existing_key_then_get_returns_error() {
-    let s = create_cache_thread();
+    let s = utils::create_execution_thread();
     execute(&s, Operation::Set("Foo".to_string(), b"Bar".to_vec()));
     execute(&s, Operation::Delete("Foo".to_string()));
     let res = execute(&s, Operation::Get("Foo".to_string()));
@@ -93,11 +81,12 @@ fn delete_existing_key_then_get_returns_error() {
 
 #[test]
 fn get_expired_key_returns_error() {
-    let s = create_cache_thread();
+    let s = utils::create_execution_thread();
 
     match Instruction::send(
         Operation::Set("Foo".to_string(), b"Bar".to_vec()),
         s.clone(),
+        1,
     ) {
         Ok(_) => {}
         Err(_) => panic!("Expected Ok response"),
@@ -105,13 +94,14 @@ fn get_expired_key_returns_error() {
     match Instruction::send(
         Operation::Expire("Foo".to_string(), Duration::from_secs(2)),
         s.clone(),
+        1,
     ) {
         Ok(_) => {}
         Err(_) => panic!("Expected Ok response"),
     }
 
     // attempt GET before expiration
-    match Instruction::send(Operation::Get("Foo".to_string()), s.clone()) {
+    match Instruction::send(Operation::Get("Foo".to_string()), s.clone(), 1) {
         Ok(response) => {
             let Response::Return(value) = response else {
                 panic!("Expected Return response");
@@ -123,7 +113,7 @@ fn get_expired_key_returns_error() {
 
     sleep(Duration::from_secs(2));
 
-    match Instruction::send(Operation::Get("Foo".to_string()), s.clone()) {
+    match Instruction::send(Operation::Get("Foo".to_string()), s.clone(), 1) {
         Ok(response) => {
             let Response::Error(ErrorKind::KeyNotFound) = response else {
                 panic!("Expected Error response");

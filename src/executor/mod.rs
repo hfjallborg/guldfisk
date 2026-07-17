@@ -1,6 +1,8 @@
 use crate::cache::Cache;
+use crate::executor::Response::Return;
 use crate::expiration::ExpirationTable;
-use crossbeam_channel::{Receiver, SendError};
+use crate::messaging::{Message, SubscriptionTable};
+use crossbeam_channel::{Receiver, SendError, Sender};
 use std::fmt::Display;
 use std::time::{Duration, SystemTime};
 
@@ -10,6 +12,10 @@ pub enum Operation {
     Get(String),
     Delete(String),
     Expire(String, Duration),
+    Subscribe(String, Sender<Message>),
+    Unsubscribe(String),
+    Publish(String, String),
+    Terminate,
     Ping,
 }
 
@@ -37,6 +43,7 @@ pub struct Instruction {
     pub op: Operation,
     pub reply: oneshot::Sender<Response>,
     pub timestamp: SystemTime,
+    pub connection_id: u64,
 }
 
 pub enum InstructionSendError {
@@ -61,13 +68,15 @@ impl Instruction {
     /// Sets the necessary fields in the instruction struct and creates the oneshot channel for the response.
     pub fn send(
         op: Operation,
-        sender: crossbeam_channel::Sender<Instruction>,
+        sender: Sender<Instruction>,
+        connection_id: u64,
     ) -> Result<Response, InstructionSendError> {
         let (rs, rr) = oneshot::channel::<Response>();
         let instruction = Instruction {
             op,
             timestamp: SystemTime::now(),
             reply: rs,
+            connection_id,
         };
         sender.send(instruction)?;
         let response = rr.recv()?;
@@ -79,6 +88,7 @@ pub fn run(
     receiver: Receiver<Instruction>,
     mut cache: Cache,
     mut expiration_table: ExpirationTable,
+    mut subscription_table: SubscriptionTable,
 ) {
     // Receives commands from connection threads and executes them.
 
@@ -121,6 +131,41 @@ pub fn run(
                 instruction.reply.send(Response::Ok()).unwrap();
             }
             Operation::Ping => {
+                instruction.reply.send(Response::Ok()).unwrap();
+            }
+            Operation::Subscribe(channel, tx) => {
+                subscription_table.add(&channel, tx, instruction.connection_id);
+                instruction.reply.send(Response::Ok()).unwrap();
+            }
+            Operation::Unsubscribe(channel) => {
+                subscription_table.remove(&channel, &instruction.connection_id);
+                instruction.reply.send(Response::Ok()).unwrap();
+            }
+            Operation::Publish(channel, content) => {
+                let txs = subscription_table.get(&channel);
+                let msg = Message {
+                    content,
+                    timestamp: instruction.timestamp,
+                    channel: channel.to_string(),
+                };
+                let mut count = 0;
+
+                for (id, tx) in txs {
+                    match tx.send(msg.clone()) {
+                        Ok(_) => count += 1,
+                        Err(e) => {
+                            println!("Failed to send message: {:?}", e);
+                            subscription_table.remove(&channel, &id);
+                        }
+                    }
+                }
+                instruction
+                    .reply
+                    .send(Return(count.to_string().into_bytes()))
+                    .unwrap();
+            }
+            Operation::Terminate => {
+                subscription_table.remove_all(&instruction.connection_id);
                 instruction.reply.send(Response::Ok()).unwrap();
             }
         }

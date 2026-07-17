@@ -2,6 +2,7 @@ use crossbeam_channel::unbounded;
 use guldfisk::cache::Cache;
 use guldfisk::executor::{Instruction, run};
 use guldfisk::expiration::ExpirationTable;
+use guldfisk::messaging::SubscriptionTable;
 use guldfisk::server::connections::accept_connections;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::net::{TcpListener, TcpStream};
@@ -36,7 +37,7 @@ fn set_tcp_roundtrip(b: divan::Bencher, key_len: usize) {
     let c = Cache::new();
     let (s, r) = unbounded::<Instruction>();
     thread::spawn(move || {
-        run(r, c, ExpirationTable::new());
+        run(r, c, ExpirationTable::new(), SubscriptionTable::new());
     });
 
     // TCP thread

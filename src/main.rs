@@ -2,6 +2,7 @@ use crossbeam_channel::unbounded;
 use guldfisk::cache::Cache;
 use guldfisk::executor::{self, Instruction};
 use guldfisk::expiration::ExpirationTable;
+use guldfisk::messaging::SubscriptionTable;
 use guldfisk::server::connections::{accept_connections, bind_unix_socket, create_addr};
 use std::net::TcpListener;
 use std::path::Path;
@@ -13,7 +14,9 @@ fn main() -> std::io::Result<()> {
     let (s, r) = unbounded::<Instruction>();
 
     let cache = Cache::new();
-    thread::spawn(move || executor::run(r, cache, ExpirationTable::new()));
+    thread::spawn(move || {
+        executor::run(r, cache, ExpirationTable::new(), SubscriptionTable::new())
+    });
 
     let tcp_listener = TcpListener::bind(&addr)?;
     let unix_listener = bind_unix_socket(Path::new("/tmp/guldfisk.sock"))?;
