@@ -8,15 +8,16 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  issues: read
 
 jobs:
-  # Create a PR with the new versions and changelog, preparing the next release.
   release-plz-pr:
     name: Release-plz PR
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
+      issues: read
     concurrency:
       group: release-plz-${{ github.ref }}
       cancel-in-progress: false
@@ -35,14 +36,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Tag the commit once a version-bump PR lands on master, so release-plz
-  # has a reference point for future version calculations. No GitHub
-  # release or crates.io publish happens (see release-plz.toml).
   release-plz-release:
     name: Release-plz release
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: write
+      issues: read
     concurrency:
       group: release-plz-release-${{ github.ref }}
       cancel-in-progress: false
