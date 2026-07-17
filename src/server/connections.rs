@@ -223,6 +223,7 @@ mod tests {
     use crossbeam_channel::unbounded;
     use std::io::{BufRead, BufReader, BufWriter};
     use std::thread;
+    use std::time::Duration;
 
     #[test]
     fn test_accept_tcp_connections() {
@@ -235,6 +236,7 @@ mod tests {
                 Cache::new(),
                 ExpirationTable::new(),
                 SubscriptionTable::new(),
+                Duration::from_secs(3600),
             )
         });
         thread::spawn(move || accept_connections(listener, s));
@@ -268,6 +270,7 @@ mod tests {
                 Cache::new(),
                 ExpirationTable::new(),
                 SubscriptionTable::new(),
+                Duration::from_secs(3600),
             )
         });
         thread::spawn(move || accept_connections(listener, s));
@@ -296,6 +299,7 @@ mod tests {
                 Cache::new(),
                 ExpirationTable::new(),
                 SubscriptionTable::new(),
+                Duration::from_secs(3600),
             )
         });
         thread::spawn(move || accept_connections(listener, s));

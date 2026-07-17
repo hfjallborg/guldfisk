@@ -2,7 +2,7 @@ use crate::cache::Cache;
 use crate::executor::Response::Return;
 use crate::expiration::ExpirationTable;
 use crate::messaging::{Message, SubscriptionTable};
-use crossbeam_channel::{Receiver, SendError, Sender};
+use crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender};
 use std::fmt::Display;
 use std::time::{Duration, SystemTime};
 
@@ -84,90 +84,110 @@ impl Instruction {
     }
 }
 
+pub(crate) fn execute_instruction(
+    cache: &mut Cache,
+    expiration_table: &mut ExpirationTable,
+    subscription_table: &mut SubscriptionTable,
+    op: Operation,
+    timestamp: SystemTime,
+    connection_id: u64,
+) -> Result<Response, ErrorKind> {
+    match op {
+        Operation::Set(key, value) => {
+            cache.set(&key, value);
+            Ok(Response::Ok())
+        }
+        Operation::Get(key) => {
+            let value = cache.get(&key);
+            match value {
+                Some(value) => {
+                    // check expiry
+                    if expiration_table.is_expired(&key, timestamp) {
+                        cache.delete(&key);
+                        expiration_table.delete(&key);
+                        Ok(Response::Error(ErrorKind::KeyNotFound))
+                    } else {
+                        Ok(Return(value))
+                    }
+                }
+                None => Ok(Response::Error(ErrorKind::KeyNotFound)),
+            }
+        }
+        Operation::Delete(key) => {
+            cache.delete(&key);
+            Ok(Response::Ok())
+        }
+        Operation::Expire(key, ttl) => {
+            expiration_table.add(key, ttl);
+            Ok(Response::Ok())
+        }
+        Operation::Ping => Ok(Response::Ok()),
+        Operation::Subscribe(channel, tx) => {
+            subscription_table.add(&channel, tx, connection_id);
+            Ok(Response::Ok())
+        }
+        Operation::Unsubscribe(channel) => {
+            subscription_table.remove(&channel, &connection_id);
+            Ok(Response::Ok())
+        }
+        Operation::Publish(channel, content) => {
+            let txs = subscription_table.get(&channel);
+            let msg = Message {
+                content,
+                timestamp,
+                channel: channel.to_string(),
+            };
+            let mut count = 0;
+
+            for (id, tx) in txs {
+                match tx.send(msg.clone()) {
+                    Ok(_) => count += 1,
+                    Err(e) => {
+                        println!("Failed to send message: {:?}", e);
+                        subscription_table.remove(&channel, &id);
+                    }
+                }
+            }
+            Ok(Return(count.to_string().into_bytes()))
+        }
+        Operation::Terminate => {
+            subscription_table.remove_all(&connection_id);
+            Ok(Response::Ok())
+        }
+    }
+}
+
 pub fn run(
     receiver: Receiver<Instruction>,
     mut cache: Cache,
     mut expiration_table: ExpirationTable,
     mut subscription_table: SubscriptionTable,
+    active_expiration_interval: Duration,
 ) {
-    // Receives commands from connection threads and executes them.
-
-    for instruction in receiver.iter() {
-        match instruction.op {
-            Operation::Set(key, value) => {
-                cache.set(&key, value);
-                instruction.reply.send(Response::Ok()).unwrap();
-            }
-            Operation::Get(key) => {
-                let value = cache.get(&key);
-                match value {
-                    Some(value) => {
-                        // check expiry
-                        if expiration_table.is_expired(&key, instruction.timestamp) {
-                            cache.delete(&key);
-                            expiration_table.delete(&key);
-                            instruction
-                                .reply
-                                .send(Response::Error(ErrorKind::KeyNotFound))
-                                .unwrap();
-                        } else {
-                            instruction.reply.send(Response::Return(value)).unwrap();
-                        }
-                    }
-                    None => {
-                        instruction
-                            .reply
-                            .send(Response::Error(ErrorKind::KeyNotFound))
-                            .unwrap();
-                    }
+    loop {
+        match receiver.recv_timeout(active_expiration_interval) {
+            Ok(instruction) => {
+                let result = execute_instruction(
+                    &mut cache,
+                    &mut expiration_table,
+                    &mut subscription_table,
+                    instruction.op,
+                    instruction.timestamp,
+                    instruction.connection_id,
+                );
+                match result {
+                    Ok(response) => instruction.reply.send(response).unwrap(),
+                    Err(err) => instruction.reply.send(Response::Error(err)).unwrap(),
                 }
             }
-            Operation::Delete(key) => {
-                cache.delete(&key);
-                instruction.reply.send(Response::Ok()).unwrap();
-            }
-            Operation::Expire(key, ttl) => {
-                expiration_table.add(key, ttl);
-                instruction.reply.send(Response::Ok()).unwrap();
-            }
-            Operation::Ping => {
-                instruction.reply.send(Response::Ok()).unwrap();
-            }
-            Operation::Subscribe(channel, tx) => {
-                subscription_table.add(&channel, tx, instruction.connection_id);
-                instruction.reply.send(Response::Ok()).unwrap();
-            }
-            Operation::Unsubscribe(channel) => {
-                subscription_table.remove(&channel, &instruction.connection_id);
-                instruction.reply.send(Response::Ok()).unwrap();
-            }
-            Operation::Publish(channel, content) => {
-                let txs = subscription_table.get(&channel);
-                let msg = Message {
-                    content,
-                    timestamp: instruction.timestamp,
-                    channel: channel.to_string(),
-                };
-                let mut count = 0;
-
-                for (id, tx) in txs {
-                    match tx.send(msg.clone()) {
-                        Ok(_) => count += 1,
-                        Err(e) => {
-                            println!("Failed to send message: {:?}", e);
-                            subscription_table.remove(&channel, &id);
-                        }
-                    }
+            Err(RecvTimeoutError::Timeout) => {
+                // Run an expiration pass instead
+                for key in expiration_table.sample_expired(SystemTime::now()) {
+                    cache.delete(&key);
+                    expiration_table.delete(&key);
                 }
-                instruction
-                    .reply
-                    .send(Return(count.to_string().into_bytes()))
-                    .unwrap();
             }
-            Operation::Terminate => {
-                subscription_table.remove_all(&instruction.connection_id);
-                instruction.reply.send(Response::Ok()).unwrap();
-            }
+            Err(RecvTimeoutError::Disconnected) => break,
         }
     }
 }

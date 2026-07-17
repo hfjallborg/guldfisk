@@ -7,6 +7,9 @@ use guldfisk::server::connections::{accept_connections, bind_unix_socket, create
 use std::net::TcpListener;
 use std::path::Path;
 use std::thread;
+use std::time::Duration;
+
+const ACTIVE_EXPIRATION_INTERVAL: Duration = Duration::from_millis(1000);
 
 fn main() -> std::io::Result<()> {
     let addr = create_addr();
@@ -14,8 +17,15 @@ fn main() -> std::io::Result<()> {
     let (s, r) = unbounded::<Instruction>();
 
     let cache = Cache::new();
+    let expiration_table = ExpirationTable::new();
     thread::spawn(move || {
-        executor::run(r, cache, ExpirationTable::new(), SubscriptionTable::new())
+        executor::run(
+            r,
+            cache,
+            expiration_table,
+            SubscriptionTable::new(),
+            ACTIVE_EXPIRATION_INTERVAL,
+        )
     });
 
     let tcp_listener = TcpListener::bind(&addr)?;

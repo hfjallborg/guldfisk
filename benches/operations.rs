@@ -7,6 +7,7 @@ use guldfisk::server::connections::accept_connections;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::net::{TcpListener, TcpStream};
 use std::thread;
+use std::time::Duration;
 
 fn main() {
     divan::main()
@@ -37,7 +38,13 @@ fn set_tcp_roundtrip(b: divan::Bencher, key_len: usize) {
     let c = Cache::new();
     let (s, r) = unbounded::<Instruction>();
     thread::spawn(move || {
-        run(r, c, ExpirationTable::new(), SubscriptionTable::new());
+        run(
+            r,
+            c,
+            ExpirationTable::new(),
+            SubscriptionTable::new(),
+            Duration::from_secs(3600),
+        );
     });
 
     // TCP thread

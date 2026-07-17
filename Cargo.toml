@@ -7,6 +7,7 @@ edition = "2024"
 crossbeam-channel = "0.5.15"
 foldhash = "0.2.0"
 oneshot = { version = "0.2.1", features = ["std"] }
+rand = "0.10.2"
 
 [dev-dependencies]
 divan = "0.1.21"
