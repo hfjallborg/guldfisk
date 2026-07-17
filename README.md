@@ -2,7 +2,7 @@
 
 ![Status](https://img.shields.io/badge/status-WIP-8b949e?style=flat-square)
 ![Rust](https://img.shields.io/badge/rust-stable-8b949e?style=flat-square&logo=rust&logoColor=white)
-![Version](https://img.shields.io/badge/version-0.1.0-7c6cf0?style=flat-square)
+![Version](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fhfjallborg%2Fguldfisk%2Fmaster%2FCargo.toml&query=%24.package.version&label=version&color=7c6cf0&style=flat-square)
 
 ***"We have Redis at home"***
 
