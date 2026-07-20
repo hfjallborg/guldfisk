@@ -1,4 +1,5 @@
 use std::fmt::Display;
+use std::io::Write;
 use std::time::Duration;
 
 #[derive(Debug, PartialEq)]
@@ -31,6 +32,33 @@ pub enum Command {
     Ping,
 }
 
+pub enum CacheData {
+    String(String),
+}
+
+pub fn format_response(data: CacheData) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    // First byte will indicate data type, as a one-byte ascii symbol
+    match data {
+        CacheData::String(s) => {
+            // Get length of string in bytes
+            let len = s.len();
+
+            // Format len as decimal string
+            let len_str = len.to_string();
+
+            let mut buf = Box::new(Vec::with_capacity(1 + len_str.len() + len + 4));
+
+            buf.write_all(b"!")?;
+            buf.write_all(len_str.as_bytes())?;
+            buf.write_all(b"\r\n")?;
+            buf.write_all(s.as_bytes())?;
+            buf.write_all(b"\r\n")?;
+
+            Ok(buf.to_vec())
+        }
+    }
+}
+
 /// Reads a one-line command and returns an Operation enum
 pub fn parse_command(command: &str) -> Result<Command, ParseError> {
     if command.is_empty() {
@@ -41,7 +69,27 @@ pub fn parse_command(command: &str) -> Result<Command, ParseError> {
     match verb.to_ascii_uppercase().as_str() {
         "SET" => {
             let (key, value_str) = rest.split_once(' ').ok_or(ParseError::MissingArguments)?;
-            Ok(Command::Set(String::from(key), String::from(value_str)))
+
+            let mut buf = String::new();
+            let mut quoted = false;
+            for c in value_str.chars() {
+                if c == '"' {
+                    if !quoted {
+                        quoted = true;
+                        continue;
+                    } else {
+                        break;
+                    }
+                }
+                if quoted {
+                    buf.push(c);
+                }
+            }
+            if !quoted {
+                return Err(ParseError::MissingArguments);
+            }
+
+            Ok(Command::Set(String::from(key), buf))
         }
         "GET" => {
             let key = String::from(rest);
@@ -118,13 +166,21 @@ mod tests {
 
     #[test]
     fn parse_set_command() {
-        let command = "SET foo hello world";
+        let command = "SET foo \"hello world\"";
 
         let Command::Set(k, v) = parse_command(command).unwrap() else {
             panic!("{:?}", command);
         };
         assert_eq!(k, "foo");
         assert_eq!(v, "hello world");
+    }
+
+    #[test]
+    fn parse_set_command_unquoted_returns_err() {
+        let command = "SET foo hello world";
+        let res = parse_command(command);
+        assert!(res.is_err());
+        assert_matches!(res, Err(ParseError::MissingArguments));
     }
 
     #[test]
@@ -143,5 +199,12 @@ mod tests {
             panic!("{:?}", command);
         };
         assert_eq!(k, "foo");
+    }
+
+    #[test]
+    fn test_format_str_response() {
+        let data = CacheData::String(String::from("hello world"));
+        let response = format_response(data).unwrap();
+        assert_eq!(response, b"!11\r\nhello world\r\n");
     }
 }

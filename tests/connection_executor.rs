@@ -31,7 +31,7 @@ fn set_then_get_returns_result() {
     let Response::Return(value) = res else {
         panic!("Expected Return response");
     };
-    assert_eq!(value, b"Bar".to_vec());
+    assert_eq!(value, b"!3\r\nBar\r\n".to_vec());
 }
 
 #[test]
@@ -43,7 +43,7 @@ fn double_set_updates_value() {
     let Response::Return(value) = res else {
         panic!("Expected Return response");
     };
-    assert_eq!(value, b"Baz".to_vec());
+    assert_eq!(value, b"!3\r\nBaz\r\n".to_vec());
 }
 
 #[test]
@@ -106,7 +106,7 @@ fn get_expired_key_returns_error() {
             let Response::Return(value) = response else {
                 panic!("Expected Return response");
             };
-            assert_eq!(value, b"Bar".to_vec());
+            assert_eq!(value, b"!3\r\nBar\r\n".to_vec());
         }
         Err(_) => panic!("Expected Ok response"),
     }

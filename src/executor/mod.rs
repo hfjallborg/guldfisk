@@ -2,6 +2,7 @@ use crate::cache::Cache;
 use crate::executor::Response::Return;
 use crate::expiration::ExpirationTable;
 use crate::messaging::{Message, SubscriptionTable};
+use crate::protocol::{CacheData, format_response};
 use crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender};
 use std::fmt::Display;
 use std::time::{Duration, SystemTime};
@@ -107,7 +108,11 @@ pub(crate) fn execute_instruction(
                         expiration_table.delete(&key);
                         Ok(Response::Error(ErrorKind::KeyNotFound))
                     } else {
-                        Ok(Return(value))
+                        let data = format_response(CacheData::String(
+                            String::from_utf8_lossy(&value).to_string(),
+                        ));
+
+                        Ok(Return(data.unwrap()))
                     }
                 }
                 None => Ok(Response::Error(ErrorKind::KeyNotFound)),
