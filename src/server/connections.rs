@@ -1,6 +1,6 @@
 use crate::executor::{Instruction, InstructionSendError, Operation, Response};
 use crate::messaging::Message;
-use crate::protocol::{Command, parse_command};
+use crate::protocol::{Command, format_message, parse_command};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -72,8 +72,8 @@ pub fn receive_messages<S: Read + Write + Send + 'static>(
     rx: Receiver<Message>,
     mut buf_writer: BufWriter<S>,
 ) -> std::io::Result<()> {
-    rx.recv().iter().try_for_each(|msg| {
-        write!(buf_writer, "MSG {} {}\r\n", msg.channel, msg.content)?;
+    rx.iter().try_for_each(|msg| {
+        buf_writer.write_all(format_message(msg).unwrap().as_slice())?;
         buf_writer.flush()?;
         Ok(())
     })
@@ -105,7 +105,7 @@ fn accept_commands<S: Read + Write + TryCloneStream + Send + 'static>(
         };
 
         let op = match cmd {
-            Command::Set(key, value) => Operation::Set(key, value.into_bytes()),
+            Command::Set(key, item) => Operation::Set(key, item),
             Command::Get(key) => Operation::Get(key),
             Command::Delete(key) => Operation::Delete(key),
             Command::Expire(key, ttl) => Operation::Expire(key, ttl),

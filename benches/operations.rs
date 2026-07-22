@@ -1,9 +1,10 @@
 use crossbeam_channel::unbounded;
-use guldfisk::cache::Cache;
+use guldfisk::cache::{Cache, CacheItem};
 use guldfisk::executor::{Instruction, run};
 use guldfisk::expiration::ExpirationTable;
 use guldfisk::messaging::SubscriptionTable;
 use guldfisk::server::connections::accept_connections;
+use std::env::var;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::net::{TcpListener, TcpStream};
 use std::thread;
@@ -25,10 +26,10 @@ fn cache_set(b: divan::Bencher, key_len: usize) {
     b.with_inputs(|| {
         let key = &keys[i % NUM_KEYS];
         i += 1;
-        (key, b"value".to_vec())
+        (key, "value".to_string())
     })
     .bench_local_values(|(key, value)| {
-        c.set(key, value);
+        c.set(key, CacheItem::String(value));
     });
 }
 

@@ -1,9 +1,10 @@
+use crate::cache::CacheItem;
 use crossbeam_channel::Sender;
 use foldhash::{HashMap, HashMapExt};
 use std::time::SystemTime;
 
 pub struct Message {
-    pub content: String,
+    pub content: CacheItem,
     pub channel: String,
     pub timestamp: SystemTime,
 }
