@@ -1,8 +1,18 @@
 use foldhash::{HashMap, HashMapExt};
 
+#[derive(Debug, PartialEq)]
 pub enum CacheItem {
     String(String),
     Array(usize, Vec<CacheItem>),
+}
+
+impl Clone for CacheItem {
+    fn clone(&self) -> Self {
+        match self {
+            CacheItem::String(s) => CacheItem::String(s.clone()),
+            CacheItem::Array(s, items) => CacheItem::Array(*s, items.clone()),
+        }
+    }
 }
 
 pub struct Cache {

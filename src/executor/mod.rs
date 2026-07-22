@@ -14,7 +14,7 @@ pub enum Operation {
     Expire(String, Duration),
     Subscribe(String, Sender<Message>),
     Unsubscribe(String),
-    Publish(String, String),
+    Publish(String, CacheItem),
     Terminate,
     Ping,
 }

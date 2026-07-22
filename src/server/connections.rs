@@ -1,4 +1,3 @@
-use crate::cache::CacheItem;
 use crate::executor::{Instruction, InstructionSendError, Operation, Response};
 use crate::messaging::Message;
 use crate::protocol::{Command, format_message, parse_command};
@@ -106,8 +105,7 @@ fn accept_commands<S: Read + Write + TryCloneStream + Send + 'static>(
         };
 
         let op = match cmd {
-            // TODO: Set array value
-            Command::Set(key, s) => Operation::Set(key, CacheItem::String(s)),
+            Command::Set(key, item) => Operation::Set(key, item),
             Command::Get(key) => Operation::Get(key),
             Command::Delete(key) => Operation::Delete(key),
             Command::Expire(key, ttl) => Operation::Expire(key, ttl),
