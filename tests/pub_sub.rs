@@ -221,7 +221,7 @@ fn test_subscribe_publish_unsubscribe_tcp() {
         let mut reader = BufReader::new(connection.try_clone().unwrap());
         let mut writer = BufWriter::new(connection);
         let mut buffer = String::new();
-        writer.write_all(b"PUBLISH foo hello\r\n").unwrap();
+        writer.write_all(b"PUBLISH foo \"hello\"\r\n").unwrap();
         writer.flush().unwrap();
         reader.read_line(&mut buffer).unwrap();
         assert_eq!(buffer, "1\r\n");
@@ -229,7 +229,16 @@ fn test_subscribe_publish_unsubscribe_tcp() {
 
     handle.join().unwrap();
     reader.read_line(&mut buffer).unwrap();
-    assert_eq!(buffer, "MSG foo hello\r\n");
+    assert_eq!(buffer, "@foo\r\n");
+
+    buffer.clear();
+    reader.read_line(&mut buffer).unwrap();
+    assert_eq!(buffer, "!5\r\n");
+
+    buffer.clear();
+    reader.read_line(&mut buffer).unwrap();
+    assert_eq!(buffer, "hello\r\n");
+
     buffer.clear();
 
     writer.write_all(b"UNSUBSCRIBE foo\r\n").unwrap();
@@ -243,13 +252,60 @@ fn test_subscribe_publish_unsubscribe_tcp() {
         let mut reader = BufReader::new(connection.try_clone().unwrap());
         let mut writer = BufWriter::new(connection);
         let mut buffer = String::new();
-        writer.write_all(b"PUBLISH foo hello\r\n").unwrap();
+        writer.write_all(b"PUBLISH foo \"hello\"\r\n").unwrap();
         writer.flush().unwrap();
         reader.read_line(&mut buffer).unwrap();
         assert_eq!(buffer, "0\r\n");
     });
 
     handle.join().unwrap();
+}
+
+#[test]
+fn test_subscriber_receives_several_messages_tcp() {
+    let inst_tx = create_execution_thread();
+    let addr = create_tcp_listener_thread(inst_tx.clone(), "127.0.0.1:0");
+
+    let connection = TcpStream::connect(addr).unwrap();
+
+    let mut reader = BufReader::new(connection.try_clone().unwrap());
+    let mut writer = BufWriter::new(connection);
+    let mut buffer = String::new();
+    writer.write_all(b"SUBSCRIBE foo\r\n").unwrap();
+    writer.flush().unwrap();
+    reader.read_line(&mut buffer).unwrap();
+    assert_eq!(buffer, "OK\r\n");
+    buffer.clear();
+
+    for content in ["one", "two", "three"] {
+        let handle = thread::spawn(move || {
+            let connection = TcpStream::connect(addr).unwrap();
+            let mut reader = BufReader::new(connection.try_clone().unwrap());
+            let mut writer = BufWriter::new(connection);
+            let mut buffer = String::new();
+            writer
+                .write_all(format!("PUBLISH foo \"{}\"\r\n", content).as_bytes())
+                .unwrap();
+            writer.flush().unwrap();
+            reader.read_line(&mut buffer).unwrap();
+            assert_eq!(buffer, "1\r\n");
+        });
+        handle.join().unwrap();
+
+        buffer.clear();
+        reader.read_line(&mut buffer).unwrap();
+        assert_eq!(buffer, "@foo\r\n");
+
+        buffer.clear();
+        reader.read_line(&mut buffer).unwrap();
+        assert_eq!(buffer, format!("!{}\r\n", content.len()));
+
+        buffer.clear();
+        reader.read_line(&mut buffer).unwrap();
+        assert_eq!(buffer, format!("{}\r\n", content));
+
+        buffer.clear();
+    }
 }
 
 #[test]
@@ -274,7 +330,7 @@ fn test_disconnect_without_unsubscribe_or_exit_cleans_up_subscription() {
         let mut reader = BufReader::new(connection.try_clone().unwrap());
         let mut writer = BufWriter::new(connection);
         buffer.clear();
-        writer.write_all(b"PUBLISH foo hello\r\n").unwrap();
+        writer.write_all(b"PUBLISH foo \"hello\"\r\n").unwrap();
         writer.flush().unwrap();
         reader.read_line(&mut buffer).unwrap();
         if buffer == "0\r\n" {

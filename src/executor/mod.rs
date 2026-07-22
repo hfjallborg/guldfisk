@@ -1,15 +1,14 @@
-use crate::cache::Cache;
+use crate::cache::{Cache, CacheItem};
 use crate::executor::Response::Return;
 use crate::expiration::ExpirationTable;
 use crate::messaging::{Message, SubscriptionTable};
-use crate::protocol::{CacheData, format_response};
+use crate::protocol::format_response;
 use crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender};
 use std::fmt::Display;
 use std::time::{Duration, SystemTime};
 
-#[derive(Debug)]
 pub enum Operation {
-    Set(String, Vec<u8>),
+    Set(String, CacheItem),
     Get(String),
     Delete(String),
     Expire(String, Duration),
@@ -108,9 +107,7 @@ pub(crate) fn execute_instruction(
                         expiration_table.delete(&key);
                         Ok(Response::Error(ErrorKind::KeyNotFound))
                     } else {
-                        let data = format_response(CacheData::String(
-                            String::from_utf8_lossy(&value).to_string(),
-                        ));
+                        let data = format_response(value);
 
                         Ok(Return(data.unwrap()))
                     }

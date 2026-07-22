@@ -1,8 +1,10 @@
 mod utils;
 use crossbeam_channel::Sender;
+use guldfisk::cache::CacheItem;
 use guldfisk::executor::{ErrorKind, Instruction, Operation, Response};
 use std::thread::sleep;
 use std::time::{Duration, SystemTime};
+
 fn execute(s: &Sender<Instruction>, op: Operation) -> Response {
     let (rs, rr) = oneshot::channel::<Response>();
     s.send(Instruction {
@@ -19,14 +21,20 @@ fn execute(s: &Sender<Instruction>, op: Operation) -> Response {
 fn set_returns_ok() {
     let s = utils::create_execution_thread();
 
-    let res = execute(&s, Operation::Set("Foo".to_string(), b"Bar".to_vec()));
+    let res = execute(
+        &s,
+        Operation::Set("Foo".to_string(), CacheItem::String("Bar".to_string())),
+    );
     assert!(matches!(res, Response::Ok()));
 }
 
 #[test]
 fn set_then_get_returns_result() {
     let s = utils::create_execution_thread();
-    execute(&s, Operation::Set("Foo".to_string(), b"Bar".to_vec()));
+    execute(
+        &s,
+        Operation::Set("Foo".to_string(), CacheItem::String("Bar".to_string())),
+    );
     let res = execute(&s, Operation::Get("Foo".to_string()));
     let Response::Return(value) = res else {
         panic!("Expected Return response");
@@ -37,8 +45,14 @@ fn set_then_get_returns_result() {
 #[test]
 fn double_set_updates_value() {
     let s = utils::create_execution_thread();
-    execute(&s, Operation::Set("Foo".to_string(), b"Bar".to_vec()));
-    execute(&s, Operation::Set("Foo".to_string(), b"Baz".to_vec()));
+    execute(
+        &s,
+        Operation::Set("Foo".to_string(), CacheItem::String("Bar".to_string())),
+    );
+    execute(
+        &s,
+        Operation::Set("Foo".to_string(), CacheItem::String("Baz".to_string())),
+    );
     let res = execute(&s, Operation::Get("Foo".to_string()));
     let Response::Return(value) = res else {
         panic!("Expected Return response");
@@ -68,7 +82,11 @@ fn delete_non_existing_key_returns_ok() {
 #[test]
 fn delete_existing_key_then_get_returns_error() {
     let s = utils::create_execution_thread();
-    execute(&s, Operation::Set("Foo".to_string(), b"Bar".to_vec()));
+
+    execute(
+        &s,
+        Operation::Set("Foo".to_string(), CacheItem::String("Bar".to_string())),
+    );
     execute(&s, Operation::Delete("Foo".to_string()));
     let res = execute(&s, Operation::Get("Foo".to_string()));
     match res {
@@ -84,7 +102,7 @@ fn get_expired_key_returns_error() {
     let s = utils::create_execution_thread();
 
     match Instruction::send(
-        Operation::Set("Foo".to_string(), b"Bar".to_vec()),
+        Operation::Set("Foo".to_string(), CacheItem::String("Bar".to_string())),
         s.clone(),
         1,
     ) {
